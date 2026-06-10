@@ -39,6 +39,7 @@ import {
 import { VoiceController } from './voice';
 import { GeminiLiveClient } from './gemini-live';
 import { AudioCapture, AudioPlayback } from './audio-pipeline';
+import { handleToolCall } from './realtime-tools';
 import {
   mountChatUI,
   addUserMessage,
@@ -212,6 +213,9 @@ function handleMicUp(): void {
 let _reachyHandle: any = null;
 let isBusy = false;
 
+/** Hidden video element for camera frame capture (bound to Reachy WebRTC stream) */
+let _cameraVideo: HTMLVideoElement | null = null;
+
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
@@ -220,6 +224,22 @@ async function main(): Promise<void> {
   const { reachy, theme } = handle;
 
   _reachyHandle = reachy;
+
+  // Create a hidden <video> element for camera frame capture.
+  // The Reachy camera feed comes via WebRTC; handle.media.attachVideo()
+  // binds the MediaStream so we can capture frames with canvas.
+  _cameraVideo = document.createElement('video');
+  _cameraVideo.playsInline = true;
+  _cameraVideo.muted = true;
+  _cameraVideo.autoplay = true;
+  _cameraVideo.style.position = 'fixed';
+  _cameraVideo.style.opacity = '0';
+  _cameraVideo.style.pointerEvents = 'none';
+  _cameraVideo.style.width = '1px';
+  _cameraVideo.style.height = '1px';
+  document.body.appendChild(_cameraVideo);
+  handle.media.attachVideo(_cameraVideo);
+  console.debug('[embed] Camera video element created and attached');
 
   // Apply theme to html element so CSS tokens pick it up
   document.documentElement.setAttribute('data-theme', theme);
@@ -285,6 +305,33 @@ async function handleModeChange(mode: AppMode): Promise<void> {
   }
 }
 
+/**
+ * Capture a JPEG frame from the Reachy camera (WebRTC video stream).
+ * Returns base64-encoded JPEG data or null if no video element is found.
+ */
+function captureFrame(): string | null {
+  if (!_cameraVideo || _cameraVideo.videoWidth === 0) {
+    console.warn('[embed] captureFrame: camera video not ready',
+      { hasEl: !!_cameraVideo, w: _cameraVideo?.videoWidth, h: _cameraVideo?.videoHeight });
+    return null;
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = _cameraVideo.videoWidth;
+  canvas.height = _cameraVideo.videoHeight;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  ctx.drawImage(_cameraVideo, 0, 0);
+  // toDataURL returns "data:image/jpeg;base64,..." — strip the prefix
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+  const base64 = dataUrl.split(',')[1] || null;
+  if (base64) {
+    console.debug('[embed] captureFrame: captured', _cameraVideo.videoWidth, 'x', _cameraVideo.videoHeight);
+  }
+  return base64;
+}
+
 async function startRealtimeMode(): Promise<void> {
   setMode('realtime');
   setRealtimeStatus('connecting');
@@ -324,7 +371,8 @@ async function startRealtimeMode(): Promise<void> {
     },
 
     onTextDelta: (text) => {
-      appendRealtimeTranscript(text, 'assistant');
+      // Model thinking text — log only, not shown in transcript
+      console.debug('[embed] model text:', text.slice(0, 80));
     },
 
     onTurnComplete: () => {
@@ -333,6 +381,42 @@ async function startRealtimeMode(): Promise<void> {
       if (_reachyHandle) {
         _reachyHandle.setTarget({ antennas: [0.2, 0.2] });
       }
+    },
+
+    onToolCall: async (calls) => {
+      console.debug('[embed] onToolCall:', calls.map(c => `${c.name}(${JSON.stringify(c.args)})`));
+      // Show thinking animation during tool execution
+      setRealtimeStatus('ai-thinking');
+      if (_reachyHandle) {
+        _reachyHandle.setTarget({ antennas: [0.0, 0.35] });
+      }
+
+      const responses = [];
+      for (const call of calls) {
+        const result = await handleToolCall(
+          call,
+          _reachyHandle,
+          (jpegBase64) => liveClient!.sendImage(jpegBase64),
+          captureFrame,
+        );
+        responses.push(result);
+      }
+
+      // Send all responses back to Gemini
+      liveClient!.sendToolResponse(responses);
+      setRealtimeStatus('listening');
+    },
+
+    onToolCallCancellation: (ids) => {
+      console.debug('[embed] Tool calls cancelled:', ids);
+    },
+
+    onInputTranscript: (text) => {
+      appendRealtimeTranscript(text, 'user');
+    },
+
+    onOutputTranscript: (text) => {
+      appendRealtimeTranscript(text, 'assistant');
     },
 
     onError: (err) => {

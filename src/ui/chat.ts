@@ -385,7 +385,7 @@ export function setMode(mode: AppMode): void {
 
 /** Update the realtime status text and mic button state */
 export function setRealtimeStatus(
-  status: 'connecting' | 'connected' | 'listening' | 'ai-speaking' | 'error' | 'disconnected',
+  status: 'connecting' | 'connected' | 'listening' | 'ai-speaking' | 'ai-thinking' | 'error' | 'disconnected',
 ): void {
   const statusEl = document.getElementById('realtime-status')!;
   const micBtn = document.getElementById('realtime-mic-btn') as HTMLButtonElement;
@@ -407,6 +407,10 @@ export function setRealtimeStatus(
       break;
     case 'ai-speaking':
       statusEl.textContent = '🔊 Reachy is speaking…';
+      micBtn.classList.add('speaking');
+      break;
+    case 'ai-thinking':
+      statusEl.textContent = '🤖 Reachy is acting…';
       micBtn.classList.add('speaking');
       break;
     case 'error':
