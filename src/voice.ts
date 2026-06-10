@@ -140,10 +140,11 @@ export class VoiceController {
   }
 
   /**
-   * Start recording (called on mousedown / touchstart).
-   * Enforces MAX_RECORD_MS safety timeout.
+   * Start recording (called on pointerdown).
+   * Requests microphone permission explicitly first — required inside iframes
+   * where Web Speech API silently fails without a prior getUserMedia grant.
    */
-  startListening(): void {
+  async startListening(): Promise<void> {
     if (!this.recognition || this._isListening) return;
     console.debug('[voice] startListening — lang:', this.recognition.lang);
 
@@ -152,6 +153,19 @@ export class VoiceController {
 
     this._interimText = '';
     this._finalText = '';
+
+    // Explicitly request mic permission before recognition.start().
+    // In iframes, Web Speech API won't capture audio without this.
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Stop the raw tracks immediately — we only need the permission grant.
+      stream.getTracks().forEach((t) => t.stop());
+      console.debug('[voice] mic permission granted');
+    } catch (err) {
+      console.warn('[voice] mic permission denied:', err);
+      return; // Cannot proceed without mic
+    }
+
     this._isListening = true;
 
     try {

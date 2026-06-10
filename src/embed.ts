@@ -157,6 +157,7 @@ async function handleUserMessage(text: string): Promise<void> {
 // PTT handlers
 // ---------------------------------------------------------------------------
 function handleMicDown(): void {
+  console.debug('[embed] handleMicDown — isBusy:', isBusy, 'sttSupported:', voiceCtrl.sttSupported);
   if (isBusy) return;
 
   if (!voiceCtrl.sttSupported) {
@@ -170,11 +171,15 @@ function handleMicDown(): void {
 
   inputMode = 'voice';
   setInputText('');
-  voiceCtrl.startListening();
-  setMicMode('listening');
+  // startListening is async (requests mic permission first); fire-and-forget.
+  // setMicMode('listening') is called after permission is granted inside startListening.
+  void voiceCtrl.startListening().then(() => {
+    if (voiceCtrl.isListening) setMicMode('listening');
+  });
 }
 
 function handleMicUp(): void {
+  console.debug('[embed] handleMicUp — isListening:', voiceCtrl.isListening);
   if (!voiceCtrl.isListening) return;
   voiceCtrl.stopListening();
   setMicMode('idle');
@@ -205,10 +210,12 @@ async function main(): Promise<void> {
 
   // Wire voice callbacks
   voiceCtrl.onTranscriptInterim = (text) => {
+    console.debug('[embed] onTranscriptInterim:', JSON.stringify(text));
     setInputText(text);
   };
 
   voiceCtrl.onTranscriptFinal = (text) => {
+    console.debug('[embed] onTranscriptFinal — sending:', JSON.stringify(text));
     setInputText('');
     void handleUserMessage(text);
   };
