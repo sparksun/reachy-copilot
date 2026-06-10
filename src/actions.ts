@@ -261,27 +261,23 @@ export function startThinkingAnimation(reachy: any): { stop: () => void } {
   let running = true;
 
   const loop = async () => {
-    const TILT = 12;        // degrees — subtle head tilt
     const ANT_UP = 0.35;    // radians — gentle antenna raise
     const ANT_DOWN = 0.0;
     const STEP_MS = 800;    // time per pose
 
     while (running) {
-      // Tilt left + raise left antenna
-      reachy.setHeadRpyDeg(-TILT, -5, 0);
+      // Raise left antenna
       reachy.setTarget({ antennas: [ANT_DOWN, ANT_UP] });
       await sleep(STEP_MS);
       if (!running) break;
 
-      // Tilt right + raise right antenna
-      reachy.setHeadRpyDeg(TILT, -5, 0);
+      // Raise right antenna
       reachy.setTarget({ antennas: [ANT_UP, ANT_DOWN] });
       await sleep(STEP_MS);
       if (!running) break;
     }
 
     // Reset to neutral on stop
-    reachy.setHeadRpyDeg(0, 0, 0);
     reachy.setTarget({ antennas: [ANT_DOWN, ANT_DOWN] });
   };
 
