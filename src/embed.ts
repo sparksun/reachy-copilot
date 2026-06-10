@@ -6,16 +6,23 @@
  *
  * 1. Mounts the chat UI
  * 2. Manages conversation history sent to Hermes
- * 3. Handles text + voice (STT) input
+ * 3. Handles text + voice (STT/TTS) input/output
  * 4. Streams Hermes responses to the UI
  * 5. Executes robot actions extracted from the response stream
  * 6. Cleans up safely on leave
  *
- * Environment variables (injected by Vite):
- *   VITE_HERMES_URL  — Hermes API base URL (e.g. https://hermes-api.aiforce.dev)
- *   VITE_HERMES_KEY  — Hermes API_SERVER_KEY
+ * Input/Output modes:
+ *   - Text input  → Text output only (no TTS)
+ *   - Voice input → Voice output (TTS) + text bubble shown in UI
  *
- * In production these should be set as HF Space secrets.
+ * Noisy environment protection:
+ *   - Push-to-Talk (PTT): mic button must be held to record.
+ *     Releasing fires STT and sends the message automatically.
+ *   - Max recording cap: 15 s (enforced in VoiceController).
+ *
+ * Environment variables (injected by Vite):
+ *   HERMES_URL  — Hermes API base URL
+ *   HERMES_KEY  — Hermes API_SERVER_KEY
  */
 
 import { connectToHost } from '@pollen-robotics/reachy-mini-sdk/host/embed';
@@ -24,15 +31,17 @@ import { streamChat, SYSTEM_PROMPT, type ChatMessage, type HermesConfig } from '
 import {
   ActionStreamProcessor,
   executeAction,
+  stripActionTags,
   ACTION_LABELS,
 } from './actions';
+import { VoiceController } from './voice';
 import {
   mountChatUI,
   addUserMessage,
   startAssistantMessage,
   setStatus,
   setInputEnabled,
-  setMicRecording,
+  setMicMode,
   setInputText,
   showActionChip,
 } from './ui/chat';
@@ -55,105 +64,15 @@ const HERMES_CONFIG: HermesConfig = {
 const history: ChatMessage[] = [{ role: 'system', content: SYSTEM_PROMPT }];
 
 // ---------------------------------------------------------------------------
-// STT via Web Speech API
+// Input mode — determines whether to trigger TTS on reply
 // ---------------------------------------------------------------------------
-interface SpeechRecognitionEvent extends Event {
-  results: SpeechRecognitionResultList;
-  resultIndex: number;
-}
+type InputMode = 'text' | 'voice';
+let inputMode: InputMode = 'text';
 
-interface SpeechRecognition extends EventTarget {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  start(): void;
-  stop(): void;
-  onresult: ((e: SpeechRecognitionEvent) => void) | null;
-  onend: (() => void) | null;
-  onerror: ((e: Event) => void) | null;
-}
-
-declare const webkitSpeechRecognition: new () => SpeechRecognition;
-
-let recognition: SpeechRecognition | null = null;
-let isRecording = false;
-let isBusy = false; // true while waiting for Hermes response
-
-function initSpeechRecognition(userLang: string): void {
-  const Ctor =
-    ('SpeechRecognition' in window
-      ? (window as unknown as { SpeechRecognition: new () => SpeechRecognition }).SpeechRecognition
-      : 'webkitSpeechRecognition' in window
-        ? webkitSpeechRecognition
-        : null);
-
-  if (!Ctor) {
-    console.warn('[reachy-copilot] Web Speech API not supported in this browser');
-    return;
-  }
-
-  recognition = new Ctor();
-  recognition.continuous = false;
-  recognition.interimResults = true;
-  // Use navigator.language as fallback (respects user's OS locale)
-  recognition.lang = userLang || navigator.language || 'en-US';
-
-  recognition.onresult = (e: SpeechRecognitionEvent) => {
-    const transcript = Array.from(e.results)
-      .map((r) => r[0].transcript)
-      .join('');
-    setInputText(transcript);
-
-    // If result is final, auto-send
-    if (e.results[e.resultIndex]?.isFinal) {
-      stopRecording();
-      const text = transcript.trim();
-      if (text) handleUserMessage(text);
-    }
-  };
-
-  recognition.onend = () => {
-    isRecording = false;
-    setMicRecording(false);
-  };
-
-  recognition.onerror = () => {
-    isRecording = false;
-    setMicRecording(false);
-  };
-}
-
-function toggleRecording(): void {
-  if (isBusy) return;
-  if (!recognition) {
-    alert('Speech recognition is not supported in this browser. Please type your message.');
-    return;
-  }
-  if (isRecording) {
-    stopRecording();
-  } else {
-    startRecording();
-  }
-}
-
-function startRecording(): void {
-  if (!recognition || isRecording) return;
-  try {
-    recognition.start();
-    isRecording = true;
-    setMicRecording(true);
-    setInputText('');
-  } catch (err) {
-    console.warn('[reachy-copilot] could not start recognition', err);
-  }
-}
-
-function stopRecording(): void {
-  if (!recognition || !isRecording) return;
-  recognition.stop();
-  isRecording = false;
-  setMicRecording(false);
-}
+// ---------------------------------------------------------------------------
+// Voice controller
+// ---------------------------------------------------------------------------
+const voiceCtrl = new VoiceController();
 
 // ---------------------------------------------------------------------------
 // Hermes interaction + robot action execution
@@ -180,7 +99,7 @@ async function handleUserMessage(text: string): Promise<void> {
 
   try {
     if (!HERMES_CONFIG.baseUrl) {
-      throw new Error('VITE_HERMES_URL is not configured. Check your .env.local or HF Spaces secrets.');
+      throw new Error('HERMES_URL is not configured. Check your .env.local or HF Spaces secrets.');
     }
 
     for await (const chunk of streamChat(history, HERMES_CONFIG)) {
@@ -208,6 +127,19 @@ async function handleUserMessage(text: string): Promise<void> {
     writer.finalize();
     history.push({ role: 'assistant', content: fullText });
     setStatus('connected');
+
+    // ── TTS: only play audio when the user used voice input ──────────────────
+    if (inputMode === 'voice' && voiceCtrl.ttsSupported) {
+      // Strip [ACTION:xxx] tags — they are invisible instructions, not speech
+      const spokenText = stripActionTags(fullText).trim();
+      if (spokenText) {
+        setMicMode('speaking');
+        voiceCtrl.speak(spokenText, () => {
+          // Speech finished or was interrupted — reset mic to idle
+          setMicMode('idle');
+        });
+      }
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('[reachy-copilot] Hermes error', err);
@@ -222,10 +154,39 @@ async function handleUserMessage(text: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// PTT handlers
+// ---------------------------------------------------------------------------
+function handleMicDown(): void {
+  if (isBusy) return;
+
+  if (!voiceCtrl.sttSupported) {
+    alert('Speech recognition is not supported in this browser. Please type your message.');
+    return;
+  }
+
+  // If TTS is playing, interrupt it first
+  voiceCtrl.cancelSpeech();
+  setMicMode('idle');
+
+  inputMode = 'voice';
+  setInputText('');
+  voiceCtrl.startListening();
+  setMicMode('listening');
+}
+
+function handleMicUp(): void {
+  if (!voiceCtrl.isListening) return;
+  voiceCtrl.stopListening();
+  setMicMode('idle');
+  // onTranscriptFinal callback below will fire handleUserMessage
+}
+
+// ---------------------------------------------------------------------------
 // Reachy handle — captured from connectToHost()
 // ---------------------------------------------------------------------------
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _reachyHandle: any = null;
+let isBusy = false;
 
 // ---------------------------------------------------------------------------
 // Boot
@@ -242,20 +203,32 @@ async function main(): Promise<void> {
     document.documentElement.setAttribute('data-theme', t);
   });
 
-  // Mount UI
-  mountChatUI({
-    onSend: (text) => void handleUserMessage(text),
-    onMicToggle: toggleRecording,
-  });
+  // Wire voice callbacks
+  voiceCtrl.onTranscriptInterim = (text) => {
+    setInputText(text);
+  };
 
-  // Init STT — use robot owner's locale if we can detect it from browser
-  initSpeechRecognition(navigator.language);
+  voiceCtrl.onTranscriptFinal = (text) => {
+    setInputText('');
+    void handleUserMessage(text);
+  };
+
+  // Mount UI with PTT callbacks
+  mountChatUI({
+    onSend: (text) => {
+      inputMode = 'text';    // keyboard → text output only
+      void handleUserMessage(text);
+    },
+    onMicDown: handleMicDown,
+    onMicUp: handleMicUp,
+  });
 
   setStatus('connected');
 
   // Clean up when user leaves session
   handle.onLeave(async () => {
-    stopRecording();
+    voiceCtrl.cancelSpeech();
+    setMicMode('idle');
     // Return robot to neutral/home pose safely
     try {
       reachy.setHeadRpyDeg(0, 0, 0);

@@ -3,6 +3,10 @@
  *
  * Handles all DOM construction and mutation.
  * embed.ts calls these functions and keeps state.
+ *
+ * Mic button uses Push-to-Talk (PTT):
+ *   mousedown/touchstart → onMicDown (start recording)
+ *   mouseup/touchend/mouseleave → onMicUp (stop recording & send)
  */
 
 import './style.css';
@@ -16,22 +20,29 @@ let messageList: HTMLElement;
 let inputTextarea: HTMLTextAreaElement;
 let btnMic: HTMLButtonElement;
 let btnSend: HTMLButtonElement;
+let pttHint: HTMLElement;
 
 /** Callbacks set by embed.ts */
 let onSend: (text: string) => void = () => {};
-let onMicToggle: () => void = () => {};
+let onMicDown: () => void = () => {};
+let onMicUp: () => void = () => {};
 
 export type Status = 'connected' | 'thinking' | 'offline';
+export type MicMode = 'idle' | 'listening' | 'speaking';
 
 /**
  * Build and mount the entire app UI into #root.
  */
 export function mountChatUI(callbacks: {
   onSend: (text: string) => void;
-  onMicToggle: () => void;
+  /** PTT press — start recording */
+  onMicDown: () => void;
+  /** PTT release — stop recording and send */
+  onMicUp: () => void;
 }): void {
   onSend = callbacks.onSend;
-  onMicToggle = callbacks.onMicToggle;
+  onMicDown = callbacks.onMicDown;
+  onMicUp = callbacks.onMicUp;
 
   const root = document.getElementById('root')!;
   root.innerHTML = '';
@@ -61,15 +72,20 @@ export function mountChatUI(callbacks: {
       </div>
     </div>
 
+    <div class="ptt-hint" id="ptt-hint" aria-live="polite"></div>
+
     <div class="input-bar">
-      <button class="icon-btn btn-mic" id="btn-mic" title="Hold to speak (press to toggle)" aria-label="Toggle voice input">
-        🎤
-      </button>
+      <button
+        class="icon-btn btn-mic"
+        id="btn-mic"
+        title="Hold to speak"
+        aria-label="Hold to speak"
+      >🎤</button>
       <textarea
         class="input-textarea"
         id="input-textarea"
         rows="1"
-        placeholder="Type a message or tap 🎤…"
+        placeholder="Type a message or hold 🎤 to speak…"
         autocomplete="off"
         spellcheck="true"
       ></textarea>
@@ -89,6 +105,7 @@ export function mountChatUI(callbacks: {
   inputTextarea = appEl.querySelector('#input-textarea') as HTMLTextAreaElement;
   btnMic = appEl.querySelector('#btn-mic') as HTMLButtonElement;
   btnSend = appEl.querySelector('#btn-send') as HTMLButtonElement;
+  pttHint = appEl.querySelector('#ptt-hint')!;
 
   // Auto-resize textarea
   inputTextarea.addEventListener('input', () => {
@@ -105,7 +122,16 @@ export function mountChatUI(callbacks: {
   });
 
   btnSend.addEventListener('click', sendCurrent);
-  btnMic.addEventListener('click', () => onMicToggle());
+
+  // ── Push-to-Talk bindings ──────────────────────────────────────────────────
+  // Mouse
+  btnMic.addEventListener('mousedown', (e) => { e.preventDefault(); onMicDown(); });
+  btnMic.addEventListener('mouseup', () => onMicUp());
+  btnMic.addEventListener('mouseleave', () => onMicUp());
+  // Touch (mobile)
+  btnMic.addEventListener('touchstart', (e) => { e.preventDefault(); onMicDown(); }, { passive: false });
+  btnMic.addEventListener('touchend', () => onMicUp());
+  btnMic.addEventListener('touchcancel', () => onMicUp());
 }
 
 function sendCurrent() {
@@ -231,16 +257,46 @@ export function setInputEnabled(enabled: boolean): void {
 }
 
 /**
- * Set mic button recording state.
+ * Set the microphone button visual mode.
+ *
+ * - 'idle'      : 🎤 default grey
+ * - 'listening' : 🎤 red pulse (PTT active — recording)
+ * - 'speaking'  : 🔊 blue pulse (TTS playing — click to interrupt)
  */
-export function setMicRecording(recording: boolean): void {
-  btnMic.classList.toggle('recording', recording);
-  btnMic.title = recording ? 'Click to stop recording' : 'Click to speak';
-  btnMic.setAttribute('aria-label', recording ? 'Stop voice input' : 'Start voice input');
+export function setMicMode(mode: MicMode): void {
+  btnMic.classList.remove('listening', 'speaking');
+
+  switch (mode) {
+    case 'listening':
+      btnMic.classList.add('listening');
+      btnMic.textContent = '🎤';
+      btnMic.title = 'Release to send';
+      btnMic.setAttribute('aria-label', 'Release to send voice message');
+      pttHint.textContent = '🎙 Listening… release to send';
+      pttHint.classList.add('visible');
+      break;
+
+    case 'speaking':
+      btnMic.classList.add('speaking');
+      btnMic.textContent = '🔊';
+      btnMic.title = 'Hold mic to interrupt';
+      btnMic.setAttribute('aria-label', 'Speaking — hold mic to interrupt');
+      pttHint.textContent = '🔊 Speaking… hold mic to interrupt';
+      pttHint.classList.add('visible');
+      break;
+
+    default: // idle
+      btnMic.textContent = '🎤';
+      btnMic.title = 'Hold to speak';
+      btnMic.setAttribute('aria-label', 'Hold to speak');
+      pttHint.textContent = '';
+      pttHint.classList.remove('visible');
+      break;
+  }
 }
 
 /**
- * Set textarea value (used by STT to populate recognized text).
+ * Set textarea value (used by STT interim results).
  */
 export function setInputText(text: string): void {
   inputTextarea.value = text;
