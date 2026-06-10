@@ -105,7 +105,7 @@ async function handleUserMessage(text: string): Promise<void> {
     for await (const chunk of streamChat(history, HERMES_CONFIG)) {
       const { visible, actions } = processor.process(chunk);
       fullText += visible;
-      if (visible) writer.appendText(fullText);
+      if (visible) writer.appendText(visible);
 
       // Execute each new action once per response
       for (const action of actions) {
