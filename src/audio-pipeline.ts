@@ -42,31 +42,42 @@ export class AudioCapture {
     // Get mic stream
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: {
-        sampleRate: CAPTURE_SAMPLE_RATE,
         channelCount: 1,
         echoCancellation: true,
         noiseSuppression: true,
       },
     });
 
-    // Create AudioContext at the desired sample rate
-    this.audioCtx = new AudioContext({ sampleRate: CAPTURE_SAMPLE_RATE });
+    // Browser may ignore sampleRate constraint; create context at default rate
+    // and downsample ourselves
+    this.audioCtx = new AudioContext();
+    const nativeRate = this.audioCtx.sampleRate;
     this.source = this.audioCtx.createMediaStreamSource(this.stream);
 
-    // Use ScriptProcessorNode for wide browser compat
-    // Buffer size ~100ms at 16kHz = 1600 samples, round to power of 2 = 2048
-    const bufferSize = 2048;
+    // Buffer size: 4096 at 48kHz ≈ 85ms
+    const bufferSize = 4096;
     this.processor = this.audioCtx.createScriptProcessor(bufferSize, 1, 1);
 
     this.processor.onaudioprocess = (e) => {
       if (!this._active) return;
 
-      const float32 = e.inputBuffer.getChannelData(0);
-      // Convert Float32 [-1, 1] to Int16 [-32768, 32767]
-      const int16 = new Int16Array(float32.length);
-      for (let i = 0; i < float32.length; i++) {
-        const s = Math.max(-1, Math.min(1, float32[i]));
-        int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      const inputData = e.inputBuffer.getChannelData(0);
+
+      // Downsample from nativeRate to 16kHz
+      const ratio = nativeRate / CAPTURE_SAMPLE_RATE;
+      const outputLen = Math.floor(inputData.length / ratio);
+      const int16 = new Int16Array(outputLen);
+
+      for (let i = 0; i < outputLen; i++) {
+        const srcIdx = i * ratio;
+        const srcFloor = Math.floor(srcIdx);
+        const srcCeil = Math.min(srcFloor + 1, inputData.length - 1);
+        const frac = srcIdx - srcFloor;
+
+        // Linear interpolation
+        const sample = inputData[srcFloor] * (1 - frac) + inputData[srcCeil] * frac;
+        const clamped = Math.max(-1, Math.min(1, sample));
+        int16[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7FFF;
       }
 
       // Encode as base64
@@ -78,7 +89,7 @@ export class AudioCapture {
     this.processor.connect(this.audioCtx.destination);
     this._active = true;
 
-    console.debug('[audio-capture] Started, sampleRate:', this.audioCtx.sampleRate);
+    console.debug(`[audio-capture] Started, native sampleRate: ${nativeRate}, output: ${CAPTURE_SAMPLE_RATE}Hz, ratio: ${(nativeRate / CAPTURE_SAMPLE_RATE).toFixed(2)}`);
   }
 
   /** Stop capturing and release resources */
