@@ -124,14 +124,15 @@ export function mountChatUI(callbacks: {
   btnSend.addEventListener('click', sendCurrent);
 
   // ── Push-to-Talk bindings ──────────────────────────────────────────────────
-  // Mouse
+  // Press: button-level (only fires when over the button)
   btnMic.addEventListener('mousedown', (e) => { e.preventDefault(); onMicDown(); });
-  btnMic.addEventListener('mouseup', () => onMicUp());
-  btnMic.addEventListener('mouseleave', () => onMicUp());
-  // Touch (mobile)
   btnMic.addEventListener('touchstart', (e) => { e.preventDefault(); onMicDown(); }, { passive: false });
-  btnMic.addEventListener('touchend', () => onMicUp());
-  btnMic.addEventListener('touchcancel', () => onMicUp());
+
+  // Release: document-level so moving finger/cursor off button doesn't end recording.
+  // Only fires a stop if the mic is actually listening (handled in embed.ts guard).
+  document.addEventListener('mouseup', () => onMicUp());
+  document.addEventListener('touchend', () => onMicUp());
+  document.addEventListener('touchcancel', () => onMicUp());
 }
 
 function sendCurrent() {

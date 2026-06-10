@@ -160,7 +160,9 @@ body {
    ============================================================ */
 .message-list {
   flex: 1;
-  overflow-y: auto;
+  min-height: 0;                    /* critical for flex child scroll */
+  overflow-y: scroll;
+  -webkit-overflow-scrolling: touch; /* iOS momentum scroll inside iframe */
   padding: 1.25rem 1rem;
   display: flex;
   flex-direction: column;

@@ -16,7 +16,7 @@
  */
 
 /** Maximum recording duration in milliseconds (PTT safety cap). */
-const MAX_RECORD_MS = 15_000;
+const MAX_RECORD_MS = 60_000;
 
 /** TTS rate — slightly faster than default to reduce wait time. */
 const TTS_RATE = 1.1;
@@ -57,6 +57,8 @@ export class VoiceController {
   private _interimText = '';
   private _finalText = '';
   private _timeoutId: ReturnType<typeof setTimeout> | null = null;
+  /** Set by stopListening() so onend knows to commit when results arrive. */
+  private _pendingCommit = false;
 
   get isListening(): boolean { return this._isListening; }
   get isSpeaking(): boolean { return this._isSpeaking; }
@@ -111,12 +113,18 @@ export class VoiceController {
     this.recognition.onend = () => {
       this._isListening = false;
       this._clearTimeout();
-      // Only emit final if stopListening() didn't already fire it
-      // (onend fires asynchronously after stop())
+      // Commit is deferred here so onresult has a chance to fire before we read
+      // the transcript. stopListening() sets _pendingCommit; the timeout path
+      // calls _commitTranscript() directly via its own flow.
+      if (this._pendingCommit) {
+        this._pendingCommit = false;
+        this._commitTranscript();
+      }
     };
 
     this.recognition.onerror = () => {
       this._isListening = false;
+      this._pendingCommit = false;
       this._clearTimeout();
     };
   }
@@ -149,20 +157,20 @@ export class VoiceController {
   }
 
   /**
-   * Stop recording and fire onTranscriptFinal (called on mouseup / touchend).
-   * If the browser hasn't emitted a final result yet, we use the last interim.
+   * Stop recording (called on mouseup / touchend via document-level listener).
+   * Commit is deferred to onend so that onresult has time to fire first.
    */
   stopListening(): void {
     if (!this.recognition || !this._isListening) return;
     this._clearTimeout();
     this._isListening = false;
+    this._pendingCommit = true; // onend will call _commitTranscript()
 
     try {
       this.recognition.stop();
     } catch { /* ignore */ }
-
-    // Emit immediately — don't wait for onend (which fires slightly later)
-    this._commitTranscript();
+    // Do NOT call _commitTranscript() here — recognition.onresult may not have
+    // fired yet. We wait for the onend event (set _pendingCommit above).
   }
 
   private _commitTranscript(): void {
