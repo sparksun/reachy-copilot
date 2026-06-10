@@ -17,6 +17,11 @@ export default defineConfig({
         target: 'https://hermes-api.aiforce.dev',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/hermes-api/, ''),
+        // Keep SSE streams alive for tool-calling queries (e.g. web search)
+        // Set 5 s above the client-side AbortSignal timeout so the proxy
+        // never drops before the browser can handle the timeout itself.
+        proxyTimeout: 125_000,
+        timeout: 125_000,
         configure: (proxy) => {
           proxy.on('proxyReq', (proxyReq) => {
             // Cloudflare on Hermes blocks streaming from localhost Origin.

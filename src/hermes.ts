@@ -68,7 +68,7 @@ export async function* streamChat(
       messages,
       stream: true,
     }),
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(120_000),
   });
 
   if (!response.ok) {
