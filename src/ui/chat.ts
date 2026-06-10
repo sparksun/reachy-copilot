@@ -124,15 +124,22 @@ export function mountChatUI(callbacks: {
   btnSend.addEventListener('click', sendCurrent);
 
   // ── Push-to-Talk bindings ──────────────────────────────────────────────────
-  // Press: button-level (only fires when over the button)
-  btnMic.addEventListener('mousedown', (e) => { e.preventDefault(); onMicDown(); });
-  btnMic.addEventListener('touchstart', (e) => { e.preventDefault(); onMicDown(); }, { passive: false });
-
-  // Release: document-level so moving finger/cursor off button doesn't end recording.
-  // Only fires a stop if the mic is actually listening (handled in embed.ts guard).
-  document.addEventListener('mouseup', () => onMicUp());
-  document.addEventListener('touchend', () => onMicUp());
-  document.addEventListener('touchcancel', () => onMicUp());
+  // Use Pointer Events + setPointerCapture so the release event is always
+  // delivered to this element even if the pointer moves outside the button.
+  // This works for mouse, touch, and stylus with a single code path.
+  btnMic.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    btnMic.setPointerCapture(e.pointerId); // capture → pointerup always fires here
+    onMicDown();
+  });
+  btnMic.addEventListener('pointerup', (e) => {
+    e.preventDefault();
+    btnMic.releasePointerCapture(e.pointerId);
+    onMicUp();
+  });
+  btnMic.addEventListener('pointercancel', () => {
+    onMicUp();
+  });
 }
 
 function sendCurrent() {

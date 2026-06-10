@@ -90,39 +90,49 @@ export class VoiceController {
     if (!Ctor) return;
 
     this.recognition = new Ctor();
-    this.recognition.continuous = false;
+    this.recognition.continuous = true;   // PTT: we control stop, not auto-silence
     this.recognition.interimResults = true;
     // Use the OS locale — matches what the user actually speaks.
-    this.recognition.lang = navigator.language || 'en-US';
+    this.recognition.lang = navigator.language || 'zh-CN';
 
     this.recognition.onresult = (e: SpeechRecognitionEvent) => {
-      const result = e.results[e.resultIndex];
-      if (!result) return;
-
-      const transcript = Array.from(e.results)
-        .map((r) => r[0].transcript)
-        .join('');
-
-      if (result.isFinal) {
-        this._finalText = transcript;
+      // In continuous mode, e.results accumulates across the whole session.
+      // Build the full transcript from all results so far.
+      let interim = '';
+      let final = '';
+      for (let i = 0; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) {
+          final += r[0].transcript;
+        } else {
+          interim += r[0].transcript;
+        }
       }
-      this._interimText = transcript;
-      this.onTranscriptInterim(transcript);
+      const combined = final + interim;
+      if (final) {
+        this._finalText = final;
+        console.debug('[voice] onresult FINAL:', final);
+      } else {
+        console.debug('[voice] onresult interim:', interim);
+      }
+      this._interimText = combined;
+      this.onTranscriptInterim(combined);
     };
 
     this.recognition.onend = () => {
+      console.debug('[voice] onend — pendingCommit:', this._pendingCommit,
+        'final:', JSON.stringify(this._finalText),
+        'interim:', JSON.stringify(this._interimText));
       this._isListening = false;
       this._clearTimeout();
-      // Commit is deferred here so onresult has a chance to fire before we read
-      // the transcript. stopListening() sets _pendingCommit; the timeout path
-      // calls _commitTranscript() directly via its own flow.
       if (this._pendingCommit) {
         this._pendingCommit = false;
         this._commitTranscript();
       }
     };
 
-    this.recognition.onerror = () => {
+    this.recognition.onerror = (e) => {
+      console.warn('[voice] onerror:', (e as ErrorEvent).message ?? e);
       this._isListening = false;
       this._pendingCommit = false;
       this._clearTimeout();
@@ -135,6 +145,7 @@ export class VoiceController {
    */
   startListening(): void {
     if (!this.recognition || this._isListening) return;
+    console.debug('[voice] startListening — lang:', this.recognition.lang);
 
     // Interrupt any ongoing TTS so the mic can hear the user.
     this.cancelSpeech();
@@ -145,7 +156,9 @@ export class VoiceController {
 
     try {
       this.recognition.start();
-    } catch {
+      console.debug('[voice] recognition.start() called');
+    } catch (err) {
+      console.warn('[voice] recognition.start() threw:', err);
       this._isListening = false;
       return;
     }
@@ -161,22 +174,27 @@ export class VoiceController {
    * Commit is deferred to onend so that onresult has time to fire first.
    */
   stopListening(): void {
-    if (!this.recognition || !this._isListening) return;
+    if (!this.recognition || !this._isListening) {
+      console.debug('[voice] stopListening skipped — isListening:', this._isListening);
+      return;
+    }
+    console.debug('[voice] stopListening — setting pendingCommit');
     this._clearTimeout();
     this._isListening = false;
-    this._pendingCommit = true; // onend will call _commitTranscript()
+    this._pendingCommit = true;
 
     try {
       this.recognition.stop();
     } catch { /* ignore */ }
-    // Do NOT call _commitTranscript() here — recognition.onresult may not have
-    // fired yet. We wait for the onend event (set _pendingCommit above).
   }
 
   private _commitTranscript(): void {
     const text = (this._finalText || this._interimText).trim();
+    console.debug('[voice] _commitTranscript — text:', JSON.stringify(text));
     if (text) {
       this.onTranscriptFinal(text);
+    } else {
+      console.warn('[voice] _commitTranscript — nothing to send (both final and interim are empty)');
     }
     this._finalText = '';
     this._interimText = '';
