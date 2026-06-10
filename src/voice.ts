@@ -59,6 +59,10 @@ export class VoiceController {
   private _timeoutId: ReturnType<typeof setTimeout> | null = null;
   /** Set by stopListening() so onend knows to commit when results arrive. */
   private _pendingCommit = false;
+  // _warmStream: holds the pre-warm MediaStream ref to keep mic hardware open.
+  // Assigned but intentionally never read — prevents GC from releasing the stream.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  private declare _warmStream: MediaStream | null;
 
   get isListening(): boolean { return this._isListening; }
   get isSpeaking(): boolean { return this._isSpeaking; }
@@ -74,16 +78,17 @@ export class VoiceController {
   }
 
   constructor() {
-    // Pre-warm microphone permission at construction time so startListening()
-    // can remain synchronous. Inside iframes, Web Speech API silently fails
-    // without a prior getUserMedia grant.
+    // Pre-warm microphone permission at construction time AND keep the stream
+    // alive. If we stop the tracks (even after 300 ms), the microphone hardware
+    // releases and recognition.start() silently fails to re-acquire it inside
+    // an iframe sandbox — producing empty transcripts.
+    // Keeping the stream alive means the mic indicator stays on, which is
+    // acceptable for a voice-controlled robot interface.
     void navigator.mediaDevices
       .getUserMedia({ audio: true })
       .then((stream) => {
-        // Stop tracks after a short delay so the hardware is released but the
-        // permission grant stays valid for recognition.start().
-        setTimeout(() => stream.getTracks().forEach((t) => t.stop()), 300);
-        console.debug('[voice] mic permission pre-warmed');
+        this._warmStream = stream; // hold reference — do NOT stop tracks
+        console.debug('[voice] mic permission pre-warmed, stream kept alive');
       })
       .catch((err) => {
         console.warn('[voice] mic permission denied at startup:', err);
