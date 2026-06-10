@@ -1,3 +1,5 @@
+import { startThinkingAnimation } from './actions';
+
 /**
  * embed.ts — Main app logic
  *
@@ -97,6 +99,10 @@ async function handleUserMessage(text: string): Promise<void> {
   // reachy handle is captured in outer scope (see main())
   const reachy = _reachyHandle;
 
+  // Start thinking animation while Hermes processes (tool calls, search…)
+  const thinkingAnim = reachy ? startThinkingAnimation(reachy) : null;
+  let thinkingStopped = false;
+
   try {
     if (!HERMES_CONFIG.baseUrl) {
       throw new Error('HERMES_URL is not configured. Check your .env.local or HF Spaces secrets.');
@@ -105,7 +111,14 @@ async function handleUserMessage(text: string): Promise<void> {
     for await (const chunk of streamChat(history, HERMES_CONFIG)) {
       const { visible, actions } = processor.process(chunk);
       fullText += visible;
-      if (visible) writer.appendText(visible);
+      if (visible) {
+        // Stop thinking animation on first text chunk
+        if (!thinkingStopped && thinkingAnim) {
+          thinkingAnim.stop();
+          thinkingStopped = true;
+        }
+        writer.appendText(visible);
+      }
 
       // Execute each new action once per response
       for (const action of actions) {
@@ -148,6 +161,8 @@ async function handleUserMessage(text: string): Promise<void> {
     history.pop();
     setStatus('connected', 'Robot connected');
   } finally {
+    // Always stop thinking animation (safe if already stopped)
+    if (!thinkingStopped) thinkingAnim?.stop();
     isBusy = false;
     setInputEnabled(true);
   }

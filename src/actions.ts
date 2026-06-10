@@ -250,3 +250,41 @@ export const ACTION_LABELS: Record<ActionType, string> = {
   antenna_wave: '📡 Waving!',
   spin: '🎉 Spinning!',
 };
+
+/**
+ * Start a looping "thinking" idle animation on the robot.
+ * Gently tilts head left/right with slow antenna wiggle.
+ * Returns a stop() handle — call it when text starts arriving.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function startThinkingAnimation(reachy: any): { stop: () => void } {
+  let running = true;
+
+  const loop = async () => {
+    const TILT = 12;        // degrees — subtle head tilt
+    const ANT_UP = 0.35;    // radians — gentle antenna raise
+    const ANT_DOWN = 0.0;
+    const STEP_MS = 800;    // time per pose
+
+    while (running) {
+      // Tilt left + raise left antenna
+      reachy.setHeadRpyDeg(-TILT, -5, 0);
+      reachy.setTarget({ antennas: [ANT_DOWN, ANT_UP] });
+      await sleep(STEP_MS);
+      if (!running) break;
+
+      // Tilt right + raise right antenna
+      reachy.setHeadRpyDeg(TILT, -5, 0);
+      reachy.setTarget({ antennas: [ANT_UP, ANT_DOWN] });
+      await sleep(STEP_MS);
+      if (!running) break;
+    }
+
+    // Reset to neutral on stop
+    reachy.setHeadRpyDeg(0, 0, 0);
+    reachy.setTarget({ antennas: [ANT_DOWN, ANT_DOWN] });
+  };
+
+  void loop();
+  return { stop: () => { running = false; } };
+}
