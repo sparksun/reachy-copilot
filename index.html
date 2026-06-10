@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Reachy Copilot</title>
+    <meta name="description" content="Conversational AI for Reachy Mini — powered by Hermes Agent" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+
+    <!--
+      Theme bootstrap: paint the correct palette BEFORE CSS lands to
+      avoid a flash. Priority: ?theme= query param (set by the host
+      shell when iframing us), then prefers-color-scheme.
+    -->
+    <script>
+      (function () {
+        try {
+          var params = new URLSearchParams(window.location.search);
+          var raw = params.get('theme');
+          var mode;
+          if (raw === 'dark' || raw === 'light') {
+            mode = raw;
+          } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches === false) {
+            mode = 'light';
+          } else {
+            mode = 'dark';
+          }
+          document.documentElement.setAttribute('data-theme', mode);
+        } catch (_) {
+          document.documentElement.setAttribute('data-theme', 'dark');
+        }
+      })();
+    </script>
+
+    <!--
+      HF Spaces helper variables.
+      - In production, HF substitutes these placeholders at file-serve
+        time when `hf_oauth: true` is set on the Space.
+      - In `npm run dev`, placeholders stay untouched; we detect that
+        and drop window.huggingface so the SDK falls back to devToken.
+    -->
+    <script>
+      (function () {
+        var clientId = '__OAUTH_CLIENT_ID__';
+        var scopes = '__OAUTH_SCOPES__';
+        var spaceHost = '__SPACE_HOST__';
+        var spaceId = '__SPACE_ID__';
+        var looksSubstituted = clientId && clientId.indexOf('__') !== 0;
+        if (looksSubstituted) {
+          window.huggingface = window.huggingface || {};
+          window.huggingface.variables = {
+            OAUTH_CLIENT_ID: clientId,
+            OAUTH_SCOPES: scopes && scopes.indexOf('__') !== 0 ? scopes : 'openid profile',
+            SPACE_HOST: spaceHost && spaceHost.indexOf('__') !== 0 ? spaceHost : '',
+            SPACE_ID: spaceId && spaceId.indexOf('__') !== 0 ? spaceId : '',
+          };
+        }
+      })();
+    </script>
+
+    <!--
+      Signaling server override for local dev.
+      The desktop app daemon (Lite version) connects to cduss-reachy-mini-central,
+      which differs from the SDK's built-in default (pollen-robotics-reachy-mini-central).
+      Injecting SIGNALING_URL here makes the SDK discover the robot correctly.
+      In production HF Spaces, the daemon will set SIGNALING_URL via its own
+      huggingface.variables injection; this block only fires when the
+      placeholder is not substituted (i.e. local npm run dev).
+    -->
+    <script>
+      (function () {
+        var clientId = '__OAUTH_CLIENT_ID__';
+        var isLocalDev = clientId && clientId.indexOf('__') === 0;
+        if (isLocalDev) {
+          window.huggingface = window.huggingface || {};
+          window.huggingface.variables = window.huggingface.variables || {};
+          // Local signaling bridge: translates SDK's HTTP protocol to
+          // GStreamer's WebSocket at ws://127.0.0.1:8443. No HF Space involved.
+          window.huggingface.variables.SIGNALING_URL =
+            'http://localhost:9090';
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- Dispatcher: picks host shell (standalone) or embed (iframed) -->
+    <script type="module" src="/src/dispatch.ts"></script>
+  </body>
+</html>
