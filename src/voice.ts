@@ -19,7 +19,10 @@
 const MAX_RECORD_MS = 60_000;
 
 /** TTS rate — slightly faster than default to reduce wait time. */
-const TTS_RATE = 1.1;
+const TTS_RATE = 1.05;
+
+/** TTS pitch — slightly higher for a cuter, more cheerful tone. */
+const TTS_PITCH = 1.3;
 
 // ─── SpeechRecognition type shim ─────────────────────────────────────────────
 
@@ -238,7 +241,7 @@ export class VoiceController {
 
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = TTS_RATE;
-    utterance.pitch = 1.0;
+    utterance.pitch = TTS_PITCH;
 
     // Auto-detect language from content
     const lang = detectLang(text);
@@ -293,18 +296,59 @@ function detectLang(text: string): string {
 }
 
 /**
+ * Preferred female voice names, ordered by priority.
+ * macOS Chrome exposes Apple voices (Ting-Ting, Mei-Jia, Samantha…)
+ * as well as Google voices. We prefer the Apple ones for a warmer tone.
+ */
+const PREFERRED_VOICES: Record<string, string[]> = {
+  zh: ['Ting-Ting', 'Mei-Jia', 'Sin-Ji', 'Google 普通话', 'Lili'],
+  en: ['Samantha', 'Karen', 'Moira', 'Tessa', 'Google US English'],
+};
+
+/**
  * Pick the best SpeechSynthesisVoice for the given BCP 47 language tag.
- * Prefers an exact match, then a prefix match (e.g. 'zh' for 'zh-CN').
+ *
+ * Strategy (in priority order):
+ *   1. Preferred female voice name for the language family
+ *   2. Any voice whose name contains "Female" (case-insensitive)
+ *   3. Exact language match
+ *   4. Language-prefix match (e.g. 'zh' for 'zh-CN')
+ *
+ * Logs the chosen voice on first call for debugging.
  */
 function pickVoice(lang: string): SpeechSynthesisVoice | null {
   if (!('speechSynthesis' in window)) return null;
   const voices = window.speechSynthesis.getVoices();
+  if (!voices.length) return null;
+
   const langLower = lang.toLowerCase();
   const prefix = langLower.split('-')[0];
 
-  return (
-    voices.find((v) => v.lang.toLowerCase() === langLower) ??
-    voices.find((v) => v.lang.toLowerCase().startsWith(prefix)) ??
-    null
+  // Filter to voices matching this language (exact or prefix)
+  const pool = voices.filter(
+    (v) => v.lang.toLowerCase() === langLower ||
+           v.lang.toLowerCase().startsWith(prefix)
   );
+  if (!pool.length) return null;
+
+  // Try preferred names first
+  const prefs = PREFERRED_VOICES[prefix] ?? [];
+  for (const name of prefs) {
+    const match = pool.find((v) => v.name.includes(name));
+    if (match) {
+      console.debug('[voice] TTS voice selected:', match.name, match.lang);
+      return match;
+    }
+  }
+
+  // Fallback: any voice with "female" in the name
+  const female = pool.find((v) => /female/i.test(v.name));
+  if (female) {
+    console.debug('[voice] TTS voice selected (female fallback):', female.name);
+    return female;
+  }
+
+  // Last resort: first matching voice
+  console.debug('[voice] TTS voice selected (first match):', pool[0].name);
+  return pool[0];
 }
