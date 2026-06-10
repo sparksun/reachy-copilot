@@ -37,6 +37,8 @@ import {
   ACTION_LABELS,
 } from './actions';
 import { VoiceController } from './voice';
+import { GeminiLiveClient } from './gemini-live';
+import { AudioCapture, AudioPlayback } from './audio-pipeline';
 import {
   mountChatUI,
   addUserMessage,
@@ -46,6 +48,11 @@ import {
   setMicMode,
   setInputText,
   showActionChip,
+  setMode,
+  setRealtimeStatus,
+  appendRealtimeTranscript,
+  clearRealtimeTranscript,
+  type AppMode,
 } from './ui/chat';
 
 // ---------------------------------------------------------------------------
@@ -232,7 +239,7 @@ async function main(): Promise<void> {
     void handleUserMessage(text);
   };
 
-  // Mount UI with PTT callbacks
+  // Mount UI with PTT callbacks + mode change
   mountChatUI({
     onSend: (text) => {
       inputMode = 'text';    // keyboard → text output only
@@ -240,6 +247,7 @@ async function main(): Promise<void> {
     },
     onMicDown: handleMicDown,
     onMicUp: handleMicUp,
+    onModeChange: (mode) => void handleModeChange(mode),
   });
 
   setStatus('connected');
@@ -248,6 +256,8 @@ async function main(): Promise<void> {
   handle.onLeave(async () => {
     voiceCtrl.cancelSpeech();
     setMicMode('idle');
+    // Disconnect realtime if active
+    stopRealtimeMode();
     // Return robot to neutral/home pose safely
     try {
       reachy.setHeadRpyDeg(0, 0, 0);
@@ -258,6 +268,113 @@ async function main(): Promise<void> {
     setStatus('offline', 'Session ended');
     setInputEnabled(false);
   });
+}
+
+// ---------------------------------------------------------------------------
+// Realtime mode lifecycle
+// ---------------------------------------------------------------------------
+let liveClient: GeminiLiveClient | null = null;
+let audioCapture: AudioCapture | null = null;
+let audioPlayback: AudioPlayback | null = null;
+
+async function handleModeChange(mode: AppMode): Promise<void> {
+  if (mode === 'realtime') {
+    await startRealtimeMode();
+  } else {
+    stopRealtimeMode();
+  }
+}
+
+async function startRealtimeMode(): Promise<void> {
+  setMode('realtime');
+  setRealtimeStatus('connecting');
+
+  audioPlayback = new AudioPlayback();
+  audioPlayback.init();
+
+  audioCapture = new AudioCapture();
+
+  liveClient = new GeminiLiveClient({
+    onSetupComplete: () => {
+      console.debug('[embed] Gemini Live setup complete');
+      setRealtimeStatus('connected');
+
+      // Start capturing audio
+      audioCapture!.start((pcmBase64) => {
+        liveClient!.sendAudio(pcmBase64);
+      }).then(() => {
+        setRealtimeStatus('listening');
+        // Antenna up while listening
+        if (_reachyHandle) {
+          _reachyHandle.setTarget({ antennas: [0.2, 0.2] });
+        }
+      }).catch((err) => {
+        console.error('[embed] Mic capture failed:', err);
+        setRealtimeStatus('error');
+      });
+    },
+
+    onAudioChunk: (pcmBase64) => {
+      setRealtimeStatus('ai-speaking');
+      audioPlayback!.playChunk(pcmBase64);
+      // Antenna wiggle while speaking
+      if (_reachyHandle) {
+        _reachyHandle.setTarget({ antennas: [0.35, 0.0] });
+      }
+    },
+
+    onTextDelta: (text) => {
+      appendRealtimeTranscript(text, 'assistant');
+    },
+
+    onTurnComplete: () => {
+      setRealtimeStatus('listening');
+      // Reset antennas to gentle listening pose
+      if (_reachyHandle) {
+        _reachyHandle.setTarget({ antennas: [0.2, 0.2] });
+      }
+    },
+
+    onError: (err) => {
+      console.error('[embed] Gemini Live error:', err);
+      setRealtimeStatus('error');
+    },
+
+    onDisconnect: () => {
+      console.debug('[embed] Gemini Live disconnected');
+      setRealtimeStatus('disconnected');
+      // Reset antennas
+      if (_reachyHandle) {
+        _reachyHandle.setTarget({ antennas: [0, 0] });
+      }
+    },
+  });
+
+  liveClient.connect();
+}
+
+function stopRealtimeMode(): void {
+  setMode('text');
+
+  if (audioCapture) {
+    audioCapture.stop();
+    audioCapture = null;
+  }
+  if (audioPlayback) {
+    audioPlayback.destroy();
+    audioPlayback = null;
+  }
+  if (liveClient) {
+    liveClient.disconnect();
+    liveClient = null;
+  }
+
+  clearRealtimeTranscript();
+
+  // Reset antennas
+  if (_reachyHandle) {
+    _reachyHandle.setTarget({ antennas: [0, 0] });
+  }
 }
 
 void main().catch((err) => {

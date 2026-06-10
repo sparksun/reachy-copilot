@@ -431,3 +431,133 @@ body {
   box-shadow: none;
   animation: none;
 }
+
+/* ============================================================
+   Utility
+   ============================================================ */
+.hidden { display: none !important; }
+
+/* ============================================================
+   Mode toggle (header)
+   ============================================================ */
+.mode-toggle {
+  margin-left: auto;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 2rem;
+  background: var(--color-surface-2);
+  color: var(--color-text);
+  font-size: 0.75rem;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition);
+  white-space: nowrap;
+}
+.mode-toggle:hover {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+}
+
+/* ============================================================
+   Realtime panel overlay
+   ============================================================ */
+.realtime-panel {
+  position: absolute;
+  inset: 52px 0 0 0;          /* below header */
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.25rem;
+  background: rgba(13, 13, 20, 0.92);
+  backdrop-filter: blur(12px);
+}
+
+.realtime-status {
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+/* Big mic button */
+.realtime-mic-btn {
+  position: relative;
+  width: 100px;
+  height: 100px;
+  border: none;
+  border-radius: 50%;
+  background: var(--color-surface-2);
+  color: var(--color-text);
+  font-size: 2.5rem;
+  cursor: default;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+
+.realtime-mic-btn.connecting {
+  background: var(--color-surface-2);
+  animation: pulse-subtle 1.5s ease-in-out infinite;
+}
+.realtime-mic-btn.listening {
+  background: #1a3a2a;
+  box-shadow: 0 0 0 6px rgba(34, 197, 94, 0.25);
+}
+.realtime-mic-btn.speaking {
+  background: #1a2a3a;
+  box-shadow: 0 0 0 6px rgba(6, 182, 212, 0.25);
+}
+.realtime-mic-btn.error {
+  background: #3a1a1a;
+  box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.25);
+}
+
+/* Pulse ring behind mic */
+.realtime-pulse {
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  border: 2px solid var(--color-accent);
+  opacity: 0;
+}
+.realtime-mic-btn.listening .realtime-pulse {
+  animation: pulse-ring 1.5s ease-out infinite;
+}
+.realtime-mic-btn.speaking .realtime-pulse {
+  border-color: var(--color-accent-2);
+  animation: pulse-ring 1.2s ease-out infinite;
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+/* Transcript area */
+.realtime-transcript {
+  width: 90%;
+  max-height: 120px;
+  overflow-y: auto;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+.realtime-transcript:empty {
+  display: none;
+}
+.rt-user {
+  color: var(--color-accent);
+}
+.rt-assistant {
+  color: var(--color-text);
+}

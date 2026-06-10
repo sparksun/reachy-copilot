@@ -26,9 +26,11 @@ let pttHint: HTMLElement;
 let onSend: (text: string) => void = () => {};
 let onMicDown: () => void = () => {};
 let onMicUp: () => void = () => {};
+let onModeChange: (mode: AppMode) => void = () => {};
 
 export type Status = 'connected' | 'thinking' | 'offline';
 export type MicMode = 'idle' | 'listening' | 'speaking';
+export type AppMode = 'text' | 'realtime';
 
 /**
  * Build and mount the entire app UI into #root.
@@ -39,10 +41,13 @@ export function mountChatUI(callbacks: {
   onMicDown: () => void;
   /** PTT release — stop recording and send */
   onMicUp: () => void;
+  /** Mode switch: text ↔ realtime */
+  onModeChange: (mode: AppMode) => void;
 }): void {
   onSend = callbacks.onSend;
   onMicDown = callbacks.onMicDown;
   onMicUp = callbacks.onMicUp;
+  onModeChange = callbacks.onModeChange;
 
   const root = document.getElementById('root')!;
   root.innerHTML = '';
@@ -60,7 +65,20 @@ export function mountChatUI(callbacks: {
         </div>
       </div>
       <div class="action-chip" id="action-chip"></div>
+      <button class="mode-toggle" id="mode-toggle" title="Switch to Realtime voice mode">
+        <span class="mode-label" id="mode-label">💬 Text</span>
+      </button>
     </header>
+
+    <!-- Realtime overlay (hidden by default) -->
+    <div class="realtime-panel hidden" id="realtime-panel">
+      <div class="realtime-status" id="realtime-status">Connecting…</div>
+      <button class="realtime-mic-btn" id="realtime-mic-btn">
+        <span class="realtime-mic-icon">🎙</span>
+        <span class="realtime-pulse"></span>
+      </button>
+      <div class="realtime-transcript" id="realtime-transcript"></div>
+    </div>
 
     <div class="message-list" id="message-list">
       <div class="empty-state" id="empty-state">
@@ -107,6 +125,10 @@ export function mountChatUI(callbacks: {
   btnSend = appEl.querySelector('#btn-send') as HTMLButtonElement;
   pttHint = appEl.querySelector('#ptt-hint')!;
 
+  // Mode toggle refs
+  const modeToggle = appEl.querySelector('#mode-toggle') as HTMLButtonElement;
+  const modeLabel = appEl.querySelector('#mode-label')!;
+
   // Auto-resize textarea
   inputTextarea.addEventListener('input', () => {
     inputTextarea.style.height = 'auto';
@@ -139,6 +161,17 @@ export function mountChatUI(callbacks: {
   });
   btnMic.addEventListener('pointercancel', () => {
     onMicUp();
+  });
+
+  // ── Mode toggle ──────────────────────────────────────────────────────────
+  let currentMode: AppMode = 'text';
+  modeToggle.addEventListener('click', () => {
+    currentMode = currentMode === 'text' ? 'realtime' : 'text';
+    modeLabel.textContent = currentMode === 'text' ? '💬 Text' : '🎙 Realtime';
+    modeToggle.title = currentMode === 'text'
+      ? 'Switch to Realtime voice mode'
+      : 'Switch to Text mode';
+    onModeChange(currentMode);
   });
 }
 
@@ -320,4 +353,85 @@ function escapeHtml(s: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+// ---------------------------------------------------------------------------
+// Realtime mode UI helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Switch the visible UI between text and realtime mode.
+ * Called by embed.ts when mode changes.
+ */
+export function setMode(mode: AppMode): void {
+  const realtimePanel = document.getElementById('realtime-panel')!;
+  const inputBar = appEl.querySelector('.input-bar') as HTMLElement;
+  const msgList = document.getElementById('message-list')!;
+  const ptt = document.getElementById('ptt-hint')!;
+
+  if (mode === 'realtime') {
+    realtimePanel.classList.remove('hidden');
+    inputBar.classList.add('hidden');
+    ptt.classList.add('hidden');
+    // Keep message list visible behind the panel for context
+    msgList.style.opacity = '0.3';
+  } else {
+    realtimePanel.classList.add('hidden');
+    inputBar.classList.remove('hidden');
+    ptt.classList.remove('hidden');
+    msgList.style.opacity = '1';
+  }
+}
+
+/** Update the realtime status text and mic button state */
+export function setRealtimeStatus(
+  status: 'connecting' | 'connected' | 'listening' | 'ai-speaking' | 'error' | 'disconnected',
+): void {
+  const statusEl = document.getElementById('realtime-status')!;
+  const micBtn = document.getElementById('realtime-mic-btn') as HTMLButtonElement;
+
+  micBtn.className = 'realtime-mic-btn'; // reset classes
+
+  switch (status) {
+    case 'connecting':
+      statusEl.textContent = '⏳ Connecting…';
+      micBtn.classList.add('connecting');
+      break;
+    case 'connected':
+      statusEl.textContent = '✅ Connected — start speaking!';
+      micBtn.classList.add('idle');
+      break;
+    case 'listening':
+      statusEl.textContent = '🎙 Listening…';
+      micBtn.classList.add('listening');
+      break;
+    case 'ai-speaking':
+      statusEl.textContent = '🔊 Reachy is speaking…';
+      micBtn.classList.add('speaking');
+      break;
+    case 'error':
+      statusEl.textContent = '❌ Connection error';
+      micBtn.classList.add('error');
+      break;
+    case 'disconnected':
+      statusEl.textContent = 'Disconnected';
+      micBtn.classList.add('idle');
+      break;
+  }
+}
+
+/** Append text to the realtime transcript area */
+export function appendRealtimeTranscript(text: string, role: 'user' | 'assistant'): void {
+  const el = document.getElementById('realtime-transcript')!;
+  const span = document.createElement('span');
+  span.className = `rt-${role}`;
+  span.textContent = text;
+  el.appendChild(span);
+  el.scrollTop = el.scrollHeight;
+}
+
+/** Clear the realtime transcript */
+export function clearRealtimeTranscript(): void {
+  const el = document.getElementById('realtime-transcript')!;
+  el.innerHTML = '';
 }
