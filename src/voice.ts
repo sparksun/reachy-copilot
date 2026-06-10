@@ -74,6 +74,21 @@ export class VoiceController {
   }
 
   constructor() {
+    // Pre-warm microphone permission at construction time so startListening()
+    // can remain synchronous. Inside iframes, Web Speech API silently fails
+    // without a prior getUserMedia grant.
+    void navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .then((stream) => {
+        // Stop tracks after a short delay so the hardware is released but the
+        // permission grant stays valid for recognition.start().
+        setTimeout(() => stream.getTracks().forEach((t) => t.stop()), 300);
+        console.debug('[voice] mic permission pre-warmed');
+      })
+      .catch((err) => {
+        console.warn('[voice] mic permission denied at startup:', err);
+      });
+
     this._initRecognition();
   }
 
@@ -140,11 +155,12 @@ export class VoiceController {
   }
 
   /**
-   * Start recording (called on pointerdown).
-   * Requests microphone permission explicitly first — required inside iframes
-   * where Web Speech API silently fails without a prior getUserMedia grant.
+   * Start recording (called on pointerdown — synchronous).
+   * Mic permission is pre-warmed in the constructor so no async wait here.
+   * Being synchronous avoids a race where pointerup fires while getUserMedia
+   * was still pending, causing stopListening() to be skipped.
    */
-  async startListening(): Promise<void> {
+  startListening(): void {
     if (!this.recognition || this._isListening) return;
     console.debug('[voice] startListening — lang:', this.recognition.lang);
 
@@ -153,19 +169,6 @@ export class VoiceController {
 
     this._interimText = '';
     this._finalText = '';
-
-    // Explicitly request mic permission before recognition.start().
-    // In iframes, Web Speech API won't capture audio without this.
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // Stop the raw tracks immediately — we only need the permission grant.
-      stream.getTracks().forEach((t) => t.stop());
-      console.debug('[voice] mic permission granted');
-    } catch (err) {
-      console.warn('[voice] mic permission denied:', err);
-      return; // Cannot proceed without mic
-    }
-
     this._isListening = true;
 
     try {

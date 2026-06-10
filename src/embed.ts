@@ -171,11 +171,8 @@ function handleMicDown(): void {
 
   inputMode = 'voice';
   setInputText('');
-  // startListening is async (requests mic permission first); fire-and-forget.
-  // setMicMode('listening') is called after permission is granted inside startListening.
-  void voiceCtrl.startListening().then(() => {
-    if (voiceCtrl.isListening) setMicMode('listening');
-  });
+  voiceCtrl.startListening();
+  setMicMode('listening');
 }
 
 function handleMicUp(): void {
